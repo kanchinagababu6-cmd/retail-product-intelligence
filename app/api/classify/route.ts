@@ -15,94 +15,69 @@ export async function POST(req: NextRequest) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured in Vercel environment variables." },
+        { error: "GEMINI_API_KEY is missing in Vercel settings." },
         { status: 500 }
       );
     }
 
     const prompt = `
-You are an expert E-Commerce Catalog Taxonomist.
-Classify the product "${productName}" specifically according to the real-world catalog taxonomy conventions of the retailer "${retailer}".
+You are an expert E-Commerce Retail Taxonomist.
+Accurately analyze and classify this product based on the real-world catalog taxonomy of "${retailer}".
 
-Respond ONLY with a valid, clean JSON object matching this schema:
+Product: "${productName}"
+
+Classify this product into its real category, subcategory, and leaf node. Return ONLY a single raw JSON object (no markdown, no backticks):
 {
-  "expandedProductName": "Standardized retail product title with pack size or format",
-  "departmentCategory": "Department / Category name for ${retailer}",
-  "subCategory": "Subcategory for ${retailer}",
-  "closestLeafNode": "The specific leaf node path",
+  "expandedProductName": "Standardized title with brand, pack size, and format",
+  "departmentCategory": "Accurate department / category in ${retailer}",
+  "subCategory": "Accurate subcategory in ${retailer}",
+  "closestLeafNode": "Specific leaf node path in ${retailer}",
   "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "confidenceScore": "94%",
-  "reasonForRecommendation": "Clear explanation of why this product belongs in this specific leaf node."
+  "confidenceScore": "95%",
+  "reasonForRecommendation": "Explain why this item belongs in this leaf node based on brand, ingredients, vehicle, and retail category."
 }
 `;
 
-    // 1. Ask Google API which models are actively supported by this key
-    let activeModel = "models/gemini-2.5-flash";
-    try {
-      const listRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
-      );
-      if (listRes.ok) {
-        const listData = await listRes.json();
-        const available = (listData.models || [])
-          .filter((m: any) =>
-            m.supportedGenerationMethods?.includes("generateContent")
-          )
-          .map((m: any) => m.name);
-
-        // Pick the best available flash model
-        const found =
-          available.find((n: string) => n.includes("flash") && !n.includes("preview")) ||
-          available.find((n: string) => n.includes("flash")) ||
-          available[0];
-
-        if (found) {
-          activeModel = found;
-        }
+    // Standard Gemini endpoint
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+          },
+        }),
       }
-    } catch {
-      // If listing fails, proceed with default active model
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return NextResponse.json(
+        { error: data.error?.message || "Google AI error occurred" },
+        { status: response.status }
+      );
     }
 
-    // 2. Call the active model endpoint
-    const cleanModelName = activeModel.replace(/^models\//, "");
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModelName}:generateContent?key=${apiKey}`;
-
-    const aiRes = await fetch(apiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
-    });
-
-    if (aiRes.ok) {
-      const aiData = await aiRes.json();
-      const rawText = aiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      // Strip markdown code fences if present
-      const cleaned = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-      return NextResponse.json(parsed);
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) {
+      return NextResponse.json(
+        { error: "AI returned an empty response. Please retry." },
+        { status: 500 }
+      );
     }
 
-    // 3. Graceful Fallback if Google AI is experiencing 503 or quota throttling
-    const cleanTitle = productName
-      .split(" ")
-      .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-      .join(" ");
+    // Clean JSON markdown wrappers if present
+    const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const result = JSON.parse(cleanJson);
 
-    return NextResponse.json({
-      expandedProductName: `${cleanTitle} (Packaged Goods)`,
-      departmentCategory: "Home, Kitchen & Essentials",
-      subCategory: "Cookware & Accessories",
-      closestLeafNode: "Slow Cooker Liners & Bags",
-      productTags: ["kitchen", "cooking", "crock-pot", "liners", "disposable"],
-      confidenceScore: "91%",
-      reasonForRecommendation: `Identified "${productName}" as kitchen slow-cooker accessory. Mapped to ${retailer}'s Kitchen Cookware Liners taxonomy.`,
-    });
+    return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json(
-      { error: err.message || "Failed to process classification" },
+      { error: err.message || "Classification failed" },
       { status: 500 }
     );
   }
