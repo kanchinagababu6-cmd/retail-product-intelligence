@@ -1,53 +1,64 @@
-import { NextResponse } from "next/server";
-import { z } from "zod";
+import { NextRequest, NextResponse } from "next/server";
 
-const requestSchema = z.object({
-  productName: z.string().min(1),
-  retailer: z.string().min(1)
-});
-
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
-    const parsed = requestSchema.safeParse(body);
+    const { productName, retailer } = await req.json();
 
-    if (!parsed.success) {
+    if (!productName || !retailer) {
       return NextResponse.json(
-        { success: false, error: "Invalid product or retailer." },
+        { error: "Product name and retailer are required." },
         { status: 400 }
       );
     }
 
-    const { productName, retailer } = parsed.data;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
 
-    return NextResponse.json({
-      success: true,
-      message: "Classification endpoint is ready.",
-      input: {
-        productName,
-        retailer
-      },
-      result: {
-        expandedProductName: productName,
-        department: "Pending AI classification",
-        category: "Pending",
-        subCategory: "Pending",
-        closestLeafNode: {
-          id: "",
-          name: "Pending taxonomy match",
-          path: ""
-        },
-        tags: [],
-        confidenceScore: 0,
-        reason: "AI classification will be connected after Firebase and AI configuration.",
-        alternatives: [],
-        requiresHumanReview: true
-      }
+    // Direct fetch to Gemini REST API (no extra dependencies required)
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const prompt = `
+You are an expert E-Commerce Catalog Taxonomist.
+Classify the following product specifically according to the taxonomy conventions of the retailer "${retailer}".
+
+Product query: "${productName}"
+
+Return ONLY valid JSON matching this exact structure:
+{
+  "expandedProductName": "Commercial standard full title with format/pack size",
+  "departmentCategory": "Department / Category name for ${retailer}",
+  "subCategory": "Subcategory for ${retailer}",
+  "closestLeafNode": "The most specific leaf node in the hierarchy",
+  "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "confidenceScore": "e.g. 94%",
+  "reasonForRecommendation": "Detailed sentence explaining why this product belongs in this leaf node based on brand, vehicle, compatibility, and format."
+}
+`;
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
     });
-  } catch {
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`AI API failed: ${errText}`);
+    }
+
+    const data = await response.json();
+    const parsedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const result = JSON.parse(parsedText);
+
+    return NextResponse.json(result);
+  } catch (error: any) {
+    console.error("Classification error:", error);
     return NextResponse.json(
-      { success: false, error: "Invalid request." },
+      { error: error.message || "Failed to classify product" },
       { status: 500 }
     );
   }
 }
+  
