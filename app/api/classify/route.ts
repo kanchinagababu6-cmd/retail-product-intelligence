@@ -1,100 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Dynamic local NLP parser for when external AI APIs face 503 traffic surges
-function generateDynamicAnalysis(rawProduct: string, retailer: string) {
-  const text = rawProduct.trim();
-  const lower = text.toLowerCase();
-
-  const titleCased = text
-    .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
-
-  // Heuristic domain detection
-  const isBeverage = /bang|drink|energy|cola|juice|soda|coffee|tea|brew|beer|modelo/i.test(lower);
-  const isToyApparel = /kiddies|kid|baby|toddler|plush|toy|doll|outfit|dress|shirt/i.test(lower);
-  const isFood = /oreo|biscuit|cookie|snack|chocolate|cereal|chip|snack|candy/i.test(lower);
-  const isCleaning = /surf|excel|clean|detergent|tide|soap|liner|crock|pot/i.test(lower);
-  const isElectronics = /phone|iphone|samsung|audio|headphone|cable|charger|tv/i.test(lower);
-
-  if (isBeverage && /bang/i.test(lower)) {
-    return {
-      expandedProductName: `${titleCased} Performance Energy Drink (16 fl oz Can)`,
-      departmentCategory: "Beverages & Pantry",
-      subCategory: "Energy Drinks & Functional Beverages",
-      closestLeafNode: "Beverages > Energy Drinks > High Performance Cans",
-      productTags: ["bang-energy", "beverages", "caffeine", "sports-nutrition", "energy-drink"],
-      confidenceScore: "95%",
-      reasonForRecommendation: `Recognized 'Bang' as an established energy beverage brand. Matched to ${retailer}'s functional energy drink catalog hierarchy.`,
-    };
-  }
-
-  if (isToyApparel) {
-    return {
-      expandedProductName: `${titleCased} Kids & Youth Apparel / Novelty Set`,
-      departmentCategory: "Apparel, Kids & Novelty",
-      subCategory: "Children's Clothing & Costumes",
-      closestLeafNode: "Kids > Novelty & Outdoor Play > Character Wear",
-      productTags: ["kids", "children", "costume", "novelty", "apparel"],
-      confidenceScore: "88%",
-      reasonForRecommendation: `Extracted 'kiddies' entity flag. Assigned to ${retailer}'s youth novelty and apparel leaf node.`,
-    };
-  }
-
-  if (isFood) {
-    return {
-      expandedProductName: `${titleCased} Packaged Snack Foods`,
-      departmentCategory: "Pantry & Groceries",
-      subCategory: "Snacks, Cookies & Chips",
-      closestLeafNode: "Snacks > Sweet & Savory Packaged Goods",
-      productTags: ["snack", "pantry", "groceries", "packaged-food"],
-      confidenceScore: "92%",
-      reasonForRecommendation: `Identified packaged snack identifiers. Routed into ${retailer}'s ambient grocery taxonomy.`,
-    };
-  }
-
-  if (isCleaning) {
-    return {
-      expandedProductName: `${titleCased} Household Cleaning & Essentials`,
-      departmentCategory: "Household Essentials",
-      subCategory: "Cleaning & Maintenance",
-      closestLeafNode: "Household Supplies > Specialty Cleaning Goods",
-      productTags: ["cleaning", "household", "care", "maintenance"],
-      confidenceScore: "90%",
-      reasonForRecommendation: `Resolved cleaning and home-care attributes according to ${retailer} catalog standards.`,
-    };
-  }
-
-  if (isElectronics) {
-    return {
-      expandedProductName: `${titleCased} Electronic Device & Accessories`,
-      departmentCategory: "Electronics & Tech",
-      subCategory: "Personal Tech & Gadgets",
-      closestLeafNode: "Consumer Electronics > Portable Tech Accessories",
-      productTags: ["electronics", "tech", "gadget", "digital"],
-      confidenceScore: "93%",
-      reasonForRecommendation: `Identified consumer electronic product string. Aligned with ${retailer}'s tech department hierarchy.`,
-    };
-  }
-
-  // Fallback for general catalog products
-  const autoTags = text
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, "")
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-
-  return {
-    expandedProductName: `${titleCased} Standard Commercial Pack`,
-    departmentCategory: "General Merchandise",
-    subCategory: "Specialty & Retail Goods",
-    closestLeafNode: `General Merchandise > Specialty Consumer Goods > ${titleCased}`,
-    productTags: autoTags.length > 0 ? autoTags : ["retail-item", "classified"],
-    confidenceScore: "86%",
-    reasonForRecommendation: `Semantic entity analysis of "${text}" aligned to ${retailer}'s primary merchandising structure.`,
-  };
-}
-
 export async function POST(req: NextRequest) {
   try {
     const { productName, retailer } = await req.json();
@@ -110,67 +15,106 @@ export async function POST(req: NextRequest) {
 
     if (!apiKey) {
       return NextResponse.json(
-        generateDynamicAnalysis(productName, retailer)
+        { error: "GEMINI_API_KEY is missing in Vercel environment variables." },
+        { status: 500 }
       );
     }
 
-    const prompt = `
-You are an expert E-Commerce Retail Taxonomist.
-Accurately analyze and classify this product based on the real-world catalog taxonomy of "${retailer}".
+    const systemInstruction = `You are a real-world enterprise retail catalog taxonomy engine.
+Analyze the given product and classify it accurately according to the active catalog taxonomy structure of "${retailer}".
+Never invent generic placeholders like "Commercial Pack" or "General Goods". Always identify the real-world brand, category, subcategory, and leaf node.
 
-Product: "${productName}"
-
-Classify this product into its real category, subcategory, and leaf node. Return ONLY a single raw JSON object:
+Output strictly valid JSON with this exact schema:
 {
-  "expandedProductName": "Standardized title with brand, pack size, and format",
-  "departmentCategory": "Accurate department / category in ${retailer}",
-  "subCategory": "Accurate subcategory in ${retailer}",
-  "closestLeafNode": "Specific leaf node path in ${retailer}",
-  "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "confidenceScore": "95%",
-  "reasonForRecommendation": "Explain why this item belongs in this leaf node based on brand, ingredients, vehicle, and retail category."
-}
-`;
+  "expandedProductName": "Full descriptive title with brand, model/flavor/scent, format and quantity/size",
+  "departmentCategory": "Realistic department / top category for ${retailer}",
+  "subCategory": "Realistic subcategory for ${retailer}",
+  "closestLeafNode": "The most specific leaf node in the hierarchy",
+  "productTags": ["brand-tag", "category-tag", "attribute-tag", "retailer-tag", "form-tag"],
+  "confidenceScore": "96%",
+  "reasonForRecommendation": "Detailed sentence explaining the semantic classification logic and retail catalog mapping."
+}`;
 
-    // Try primary model first, fallback to pro model if flash is overloaded (503)
-    const modelsToTry = ["gemini-3.8-flash", "gemini-3.8-pro"];
-    let aiResult: any = null;
+    const promptText = `Product to classify: "${productName}"\nTarget Retailer: "${retailer}"`;
 
-    for (const model of modelsToTry) {
-      try {
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-        const response = await fetch(apiUrl, {
+    // Attempt 1: Modern Interactions API
+    let jsonResult = null;
+    let apiErrorMessage = "";
+
+    try {
+      const interactionRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/interactions?key=${apiKey}`,
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.1 },
+            model: "gemini-3.8-flash",
+            input: `${systemInstruction}\n\n${promptText}`,
           }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (rawText) {
-            const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-            aiResult = JSON.parse(cleanJson);
-            break;
-          }
         }
-      } catch {
-        // Continue to fallback model or dynamic analyzer
+      );
+
+      if (interactionRes.ok) {
+        const iData = await interactionRes.json();
+        const text = iData.output_text || iData.text || iData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          const clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+          jsonResult = JSON.parse(clean);
+        }
+      } else {
+        const errText = await interactionRes.text();
+        apiErrorMessage = `Interactions error (${interactionRes.status}): ${errText}`;
+      }
+    } catch (e: any) {
+      apiErrorMessage = e.message;
+    }
+
+    // Attempt 2: Direct generateContent endpoint with gemini-3.8-flash
+    if (!jsonResult) {
+      try {
+        const genRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `${systemInstruction}\n\n${promptText}` }] }],
+              generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.1,
+              },
+            }),
+          }
+        );
+
+        if (genRes.ok) {
+          const gData = await genRes.json();
+          const raw = gData.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (raw) {
+            const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+            jsonResult = JSON.parse(clean);
+          }
+        } else {
+          const errText = await genRes.text();
+          apiErrorMessage = `generateContent error (${genRes.status}): ${errText}`;
+        }
+      } catch (e: any) {
+        apiErrorMessage = e.message;
       }
     }
 
-    // If external AI models are experiencing 503 traffic spikes, return dynamic analysis
-    if (!aiResult) {
-      aiResult = generateDynamicAnalysis(productName, retailer);
+    // If AI fails, report the direct API reason instead of disguising it as a generic product
+    if (!jsonResult) {
+      return NextResponse.json(
+        { error: `AI Classification failed: ${apiErrorMessage}` },
+        { status: 502 }
+      );
     }
 
-    return NextResponse.json(aiResult);
+    return NextResponse.json(jsonResult);
   } catch (err: any) {
     return NextResponse.json(
-      { error: err.message || "Classification failed" },
+      { error: err.message || "Failed to process classification" },
       { status: 500 }
     );
   }
