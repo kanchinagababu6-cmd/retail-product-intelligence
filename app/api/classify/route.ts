@@ -21,17 +21,17 @@ export async function POST(req: NextRequest) {
     }
 
     const systemPrompt = `You are an expert E-Commerce Catalog Taxonomist.
-Your job is to analyze any product string and classify it according to the real-world catalog taxonomy of "${retailer}".
-Never invent generic placeholders. Determine the real commercial product name, department, subcategory, leaf node, and tags.
+Classify the product string according to the real-world catalog taxonomy of "${retailer}".
+Never invent generic placeholders. You must identify the real commercial product name, department, subcategory, leaf node, tags, and reason.
 
-You MUST respond strictly with a valid JSON object matching this schema:
+Respond ONLY with a valid JSON object matching this schema:
 {
   "expandedProductName": "Standardized title with brand, pack size, and volume/format",
   "departmentCategory": "Realistic department / top category for ${retailer}",
   "subCategory": "Realistic subcategory for ${retailer}",
   "closestLeafNode": "The most specific leaf node in the hierarchy",
   "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "confidenceScore": "96%",
+  "confidenceScore": "95%",
   "reasonForRecommendation": "Detailed sentence explaining the semantic classification logic and retail catalog mapping."
 }`;
 
@@ -42,7 +42,7 @@ You MUST respond strictly with a valid JSON object matching this schema:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-8b-instant",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Product: "${productName}"\nRetailer: "${retailer}"` },
