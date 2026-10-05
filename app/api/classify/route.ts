@@ -38,10 +38,14 @@ Classify this product into its real category, subcategory, and leaf node. Return
 }
 `;
 
-    // Standard Gemini endpoint
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
+
+    let response: Response | null = null;
+    let data: any = null;
+
+    // Retry loop (up to 3 attempts with brief backoff for temporary 503 capacity spikes)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      response = await fetch(apiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50,19 +54,31 @@ Classify this product into its real category, subcategory, and leaf node. Return
             temperature: 0.1,
           },
         }),
+      });
+
+      data = await response.json();
+
+      if (response.ok) {
+        break;
       }
-    );
 
-    const data = await response.json();
+      // If overloaded (503), wait 1 second before retrying
+      if (response.status === 503 && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      } else {
+        break;
+      }
+    }
 
-    if (!response.ok) {
+    if (!response || !response.ok) {
       return NextResponse.json(
-        { error: data.error?.message || "Google AI error occurred" },
-        { status: response.status }
+        { error: data?.error?.message || "Google AI error occurred" },
+        { status: response ? response.status : 500 }
       );
     }
 
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawText) {
       return NextResponse.json(
         { error: "AI returned an empty response. Please retry." },
@@ -70,7 +86,7 @@ Classify this product into its real category, subcategory, and leaf node. Return
       );
     }
 
-    // Clean JSON markdown wrappers if present
+    // Clean JSON wrappers
     const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
     const result = JSON.parse(cleanJson);
 
