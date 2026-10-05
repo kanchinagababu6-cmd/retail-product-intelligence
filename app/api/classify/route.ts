@@ -13,44 +13,71 @@ export async function POST(req: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.AI_API_KEY;
 
-    // Direct fetch to Gemini REST API (no extra dependencies required)
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY is missing in Vercel environment variables." },
+        { status: 500 }
+      );
+    }
 
     const prompt = `
 You are an expert E-Commerce Catalog Taxonomist.
-Classify the following product specifically according to the taxonomy conventions of the retailer "${retailer}".
+Classify the following product specifically according to the real-world taxonomy conventions of "${retailer}".
 
 Product query: "${productName}"
 
 Return ONLY valid JSON matching this exact structure:
 {
-  "expandedProductName": "Commercial standard full title with format/pack size",
+  "expandedProductName": "Commercial standard full title with format and pack size",
   "departmentCategory": "Department / Category name for ${retailer}",
   "subCategory": "Subcategory for ${retailer}",
   "closestLeafNode": "The most specific leaf node in the hierarchy",
   "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
   "confidenceScore": "e.g. 94%",
-  "reasonForRecommendation": "Detailed sentence explaining why this product belongs in this leaf node based on brand, vehicle, compatibility, and format."
+  "reasonForRecommendation": "Clear explanation of why this product belongs in this leaf node based on brand, vehicle, compatibility, and format."
 }
 `;
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json" },
-      }),
-    });
+    // Try standard v1beta with gemini-1.5-flash-latest, fallback to gemini-2.0-flash
+    const models = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-2.0-flash"];
+    let result = null;
+    let lastError = null;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`AI API failed: ${errText}`);
+    for (const model of models) {
+      try {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.2,
+            },
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            result = JSON.parse(rawText);
+            break; // Successfully got response
+          }
+        } else {
+          const errBody = await response.text();
+          lastError = errBody;
+        }
+      } catch (e: any) {
+        lastError = e.message;
+      }
     }
 
-    const data = await response.json();
-    const parsedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    const result = JSON.parse(parsedText);
+    if (!result) {
+      throw new Error(`AI API failed: ${lastError}`);
+    }
 
     return NextResponse.json(result);
   } catch (error: any) {
@@ -61,4 +88,3 @@ Return ONLY valid JSON matching this exact structure:
     );
   }
 }
-  
