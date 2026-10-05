@@ -15,103 +15,81 @@ export async function POST(req: NextRequest) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY is missing in Vercel environment variables." },
+        { error: "GEMINI_API_KEY is not configured in Vercel." },
         { status: 500 }
       );
     }
 
-    const systemInstruction = `You are a real-world enterprise retail catalog taxonomy engine.
-Analyze the given product and classify it accurately according to the active catalog taxonomy structure of "${retailer}".
-Never invent generic placeholders like "Commercial Pack" or "General Goods". Always identify the real-world brand, category, subcategory, and leaf node.
+    const prompt = `
+You are a retail catalog taxonomist for "${retailer}".
+Classify this specific product: "${productName}"
 
-Output strictly valid JSON with this exact schema:
+Return ONLY a single valid JSON object with no markdown formatting or backticks:
 {
-  "expandedProductName": "Full descriptive title with brand, model/flavor/scent, format and quantity/size",
-  "departmentCategory": "Realistic department / top category for ${retailer}",
-  "subCategory": "Realistic subcategory for ${retailer}",
-  "closestLeafNode": "The most specific leaf node in the hierarchy",
-  "productTags": ["brand-tag", "category-tag", "attribute-tag", "retailer-tag", "form-tag"],
-  "confidenceScore": "96%",
-  "reasonForRecommendation": "Detailed sentence explaining the semantic classification logic and retail catalog mapping."
-}`;
+  "expandedProductName": "Accurate descriptive commercial name with brand, format, and volume/weight",
+  "departmentCategory": "Primary department and category for ${retailer}",
+  "subCategory": "Accurate subcategory for ${retailer}",
+  "closestLeafNode": "The most specific leaf node in ${retailer}'s catalog taxonomy",
+  "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "confidenceScore": "94%",
+  "reasonForRecommendation": "Clear explanation based on product characteristics, ingredients, format, and ${retailer}'s hierarchy."
+}
+`;
 
-    const promptText = `Product to classify: "${productName}"\nTarget Retailer: "${retailer}"`;
+    // Priority order of models to bypass single-model 503 traffic spikes
+    const candidateModels = [
+      "gemini-2.0-flash-exp",
+      "gemini-1.5-flash",
+      "gemini-1.5-pro",
+      "gemini-3.8-flash",
+    ];
 
-    // Attempt 1: Modern Interactions API
-    let jsonResult = null;
-    let apiErrorMessage = "";
+    let aiResult = null;
+    let lastError = "";
 
-    try {
-      const interactionRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/interactions?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "gemini-3.8-flash",
-            input: `${systemInstruction}\n\n${promptText}`,
-          }),
-        }
-      );
-
-      if (interactionRes.ok) {
-        const iData = await interactionRes.json();
-        const text = iData.output_text || iData.text || iData.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          const clean = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-          jsonResult = JSON.parse(clean);
-        }
-      } else {
-        const errText = await interactionRes.text();
-        apiErrorMessage = `Interactions error (${interactionRes.status}): ${errText}`;
-      }
-    } catch (e: any) {
-      apiErrorMessage = e.message;
-    }
-
-    // Attempt 2: Direct generateContent endpoint with gemini-3.8-flash
-    if (!jsonResult) {
+    for (const model of candidateModels) {
       try {
-        const genRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-          {
+        // Test standard v1 first, then v1beta
+        for (const apiVersion of ["v1", "v1beta"]) {
+          const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${apiKey}`;
+
+          const res = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              contents: [{ parts: [{ text: `${systemInstruction}\n\n${promptText}` }] }],
-              generationConfig: {
-                responseMimeType: "application/json",
-                temperature: 0.1,
-              },
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.1 },
             }),
-          }
-        );
+          });
 
-        if (genRes.ok) {
-          const gData = await genRes.json();
-          const raw = gData.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (raw) {
-            const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
-            jsonResult = JSON.parse(clean);
+          if (res.ok) {
+            const data = await res.json();
+            const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) {
+              const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+              aiResult = JSON.parse(cleaned);
+              break;
+            }
+          } else {
+            const errText = await res.text();
+            lastError = `[${model}/${apiVersion}] ${errText}`;
           }
-        } else {
-          const errText = await genRes.text();
-          apiErrorMessage = `generateContent error (${genRes.status}): ${errText}`;
         }
-      } catch (e: any) {
-        apiErrorMessage = e.message;
+
+        if (aiResult) break;
+      } catch (err: any) {
+        lastError = err.message;
       }
     }
 
-    // If AI fails, report the direct API reason instead of disguising it as a generic product
-    if (!jsonResult) {
+    if (!aiResult) {
       return NextResponse.json(
-        { error: `AI Classification failed: ${apiErrorMessage}` },
-        { status: 502 }
+        { error: `All AI models temporarily busy. Last response: ${lastError}` },
+        { status: 503 }
       );
     }
 
-    return NextResponse.json(jsonResult);
+    return NextResponse.json(aiResult);
   } catch (err: any) {
     return NextResponse.json(
       { error: err.message || "Failed to process classification" },
