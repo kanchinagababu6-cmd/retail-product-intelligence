@@ -33,38 +33,59 @@ Return ONLY valid JSON matching this exact structure:
   "subCategory": "Subcategory for ${retailer}",
   "closestLeafNode": "The most specific leaf node in the hierarchy",
   "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "confidenceScore": "94%",
+  "confidenceScore": "95%",
   "reasonForRecommendation": "Clear explanation of why this product belongs in this leaf node based on brand, vehicle, compatibility, and format."
 }
 `;
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
+    // Multi-model chain: if one model is overloaded (503), it immediately tries the next
+    const candidateModels = [
+      "gemini-3.8-flash",
+      "gemini-2.5-flash",
+      "gemini-1.5-flash-latest",
+      "gemini-1.5-pro",
+    ];
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2,
-        },
-      }),
-    });
+    let result = null;
+    let lastErrorDetails = "";
 
-    if (!response.ok) {
-      const errBody = await response.text();
-      throw new Error(`AI API failed: ${errBody}`);
+    for (const model of candidateModels) {
+      try {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.2,
+            },
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            result = JSON.parse(rawText);
+            break; // Succeeded! Break loop
+          }
+        } else {
+          const errBody = await response.text();
+          lastErrorDetails = `Model ${model} failed (${response.status}): ${errBody}`;
+          // Continue loop to try next model
+        }
+      } catch (err: any) {
+        lastErrorDetails = `Error calling ${model}: ${err.message}`;
+      }
     }
 
-    const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (!rawText) {
-      throw new Error("No text content returned from AI API.");
+    if (!result) {
+      throw new Error(`All models failed. Last error: ${lastErrorDetails}`);
     }
 
-    const result = JSON.parse(rawText);
     return NextResponse.json(result);
   } catch (error: any) {
     console.error("Classification error:", error);
