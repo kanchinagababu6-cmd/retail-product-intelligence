@@ -17,12 +17,15 @@ export default function ClassifyPage() {
   const [retailer, setRetailer] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ClassificationResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleClassify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productName.trim() || !retailer.trim()) return;
 
     setLoading(true);
+    setErrorMessage(null);
+    setResult(null);
 
     try {
       const res = await fetch("/api/classify", {
@@ -35,19 +38,14 @@ export default function ClassifyPage() {
       });
 
       const data = await res.json();
-      if (data && data.expandedProductName) {
-        setResult(data);
+
+      if (!res.ok) {
+        throw new Error(data.error || `Server returned status ${res.status}`);
       }
-    } catch {
-      setResult({
-        expandedProductName: `${productName} Commercial Standard`,
-        departmentCategory: "General Catalog",
-        subCategory: "Merchandise",
-        closestLeafNode: `Catalog Items > ${productName}`,
-        productTags: ["retail", "catalog", "verified"],
-        confidenceScore: "90%",
-        reasonForRecommendation: `Mapped to ${retailer} catalog structure based on semantic attributes.`,
-      });
+
+      setResult(data);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to classify product.");
     } finally {
       setLoading(false);
     }
@@ -78,7 +76,7 @@ export default function ClassifyPage() {
               type="text"
               value={productName}
               onChange={(e) => setProductName(e.target.value)}
-              placeholder="e.g. Yellow pepper, Oreo, Surf Excel..."
+              placeholder="e.g. MM HDB WEST SUM 17 ASST 2..."
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500 text-sm placeholder-slate-500"
               required
             />
@@ -92,7 +90,7 @@ export default function ClassifyPage() {
               type="text"
               value={retailer}
               onChange={(e) => setRetailer(e.target.value)}
-              placeholder="e.g. Walmart, Target, Amazon, Costco, Kroger, Tesco..."
+              placeholder="e.g. HEB, Walmart, Target..."
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-indigo-500 text-sm placeholder-slate-500"
               required
             />
@@ -103,11 +101,19 @@ export default function ClassifyPage() {
             disabled={loading || !productName.trim() || !retailer.trim()}
             className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 px-4 rounded-xl transition cursor-pointer disabled:opacity-50 text-sm"
           >
-            {loading ? "Analyzing Taxonomy..." : "Classify Product"}
+            {loading ? "Analyzing with Live AI..." : "Classify Product"}
           </button>
         </form>
 
-        {/* Product Classification Display Card */}
+        {/* Real Error Diagnostic Box */}
+        {errorMessage && (
+          <div className="bg-red-950/40 border border-red-800/80 rounded-2xl p-4 text-red-300 text-xs font-mono break-words shadow-lg">
+            <span className="font-bold block text-red-200 mb-1">Backend Response Error:</span>
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Live Product Classification Display Card */}
         {result && (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-3">
