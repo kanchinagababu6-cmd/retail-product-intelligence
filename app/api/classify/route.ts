@@ -15,12 +15,12 @@ export async function POST(req: NextRequest) {
 
     if (!groqKey) {
       return NextResponse.json(
-        { error: "GROQ_API_KEY is not configured in Vercel." },
+        { error: "GROQ_API_KEY is not defined in Vercel Environment Variables." },
         { status: 500 }
       );
     }
 
-    // 1. Fetch available models from Groq account
+    // Dynamic model discovery from your active Groq account
     let selectedModel = "openai/gpt-oss-20b";
     try {
       const modelListRes = await fetch("https://api.groq.com/openai/v1/models", {
@@ -39,39 +39,25 @@ export async function POST(req: NextRequest) {
           availableIds.find((id) => id.includes("120b")) ||
           availableIds[0];
 
-        if (match) {
-          selectedModel = match;
-        }
+        if (match) selectedModel = match;
       }
     } catch {
-      // Fallback to default
+      // Continue with default
     }
 
-    // Specialized retail taxonomy & POS abbreviation decoding instructions
-    const systemPrompt = `You are a Principal Retail Catalog Architect and Enterprise POS (Point of Sale) Data Specialist.
+    const systemPrompt = `You are a Principal E-Commerce Retail Catalog Taxonomist and POS receipt abbreviation decoder.
+Accurately decode and classify the given retail query according to the real-world catalog hierarchy of "${retailer}".
+De-abbreviate store tokens (e.g. HDB = Headband, WEST = Western, SUM = Summer, ASST = Assortment, POU = Pouch, SPKLE = Sparkle, MM = Member's Mark or Minnie Mouse).
 
-Your task is to decipher raw, abbreviated retail item descriptions (receipt strings, warehouse abbreviations, truncated SKU titles) and map them to the official taxonomy of "${retailer}".
-
-DECODING INSTRUCTIONS:
-1. De-abbreviate retail tokens carefully:
-   - "POU" = Pouch / Pour
-   - "SPKLE" = Sparkle / Sparkling
-   - "COS" = Cosmetic / Cosmetics / Costume
-   - "SMG" = Smiggle / Small Goods / Shimmer
-   - "RHOLG" / abbreviations = check for brand, variant, or packaging codes.
-2. NEVER guess unrelated terms (do not turn "MM" into sports drinks or random books).
-3. If an abbreviation is ambiguous, deduce the most statistically probable consumer product in "${retailer}".
-4. Output realistic catalog categories: Top Department, Subcategory, and a clean hierarchical Leaf Node.
-
-Respond ONLY with valid JSON (no markdown formatting, no code blocks):
+Output strictly valid JSON matching this schema:
 {
-  "expandedProductName": "Accurately deciphered and spelled-out commercial title with format/type",
+  "expandedProductName": "Fully decoded standard title with brand, style, and pack details",
   "departmentCategory": "Official store department for ${retailer}",
   "subCategory": "Relevant subcategory in ${retailer}",
-  "closestLeafNode": "Specific leaf node path (e.g. Beauty > Makeup Bags & Cases > Sparkle Pouches)",
-  "productTags": ["brand-or-type", "category", "material-or-flavor", "feature", "retailer"],
-  "confidenceScore": "92%",
-  "reasonForRecommendation": "Explain the token-by-token de-abbreviation logic and why it belongs in this exact leaf node."
+  "closestLeafNode": "Specific leaf node path in ${retailer}",
+  "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "confidenceScore": "94%",
+  "reasonForRecommendation": "Clear explanation of how the tokens were decoded and why they map to this leaf node."
 }`;
 
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -84,26 +70,35 @@ Respond ONLY with valid JSON (no markdown formatting, no code blocks):
         model: selectedModel,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Product Query: "${productName}"\nRetailer: "${retailer}"` },
+          { role: "user", content: `Product: "${productName}"\nRetailer: "${retailer}"` },
         ],
         response_format: { type: "json_object" },
-        temperature: 0.0, // Zero temperature prevents random creative hallucinations
+        temperature: 0.1,
       }),
     });
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`Groq API (${selectedModel}) returned ${res.status}: ${errText}`);
+      return NextResponse.json(
+        { error: `Groq error (${res.status}): ${errText}` },
+        { status: res.status }
+      );
     }
 
     const data = await res.json();
-    const content = data.choices?.[0]?.message?.content;
-    const parsed = JSON.parse(content);
+    const rawContent = data.choices?.[0]?.message?.content;
 
-    return NextResponse.json(parsed);
+    if (!rawContent) {
+      return NextResponse.json(
+        { error: "Groq returned an empty response." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(JSON.parse(rawContent));
   } catch (err: any) {
     return NextResponse.json(
-      { error: err.message || "Classification failed" },
+      { error: err.message || "Failed to classify product" },
       { status: 500 }
     );
   }
