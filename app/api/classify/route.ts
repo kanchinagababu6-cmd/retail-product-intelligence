@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Fetch available models directly from your Groq account
+    // 1. Fetch available models from Groq account
     let selectedModel = "openai/gpt-oss-20b";
     try {
       const modelListRes = await fetch("https://api.groq.com/openai/v1/models", {
@@ -33,7 +33,6 @@ export async function POST(req: NextRequest) {
           .map((m: any) => m.id)
           .filter((id: string) => !id.includes("whisper") && !id.includes("guard"));
 
-        // Prefer fast chat models that are active right now
         const match =
           availableIds.find((id) => id.includes("gpt-oss-20b")) ||
           availableIds.find((id) => id.includes("qwen")) ||
@@ -45,25 +44,36 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch {
-      // If listing fails, proceed with default candidate
+      // Fallback to default
     }
 
-    const systemPrompt = `You are an expert E-Commerce Catalog Taxonomist.
-Classify the product string according to the real-world catalog taxonomy of "${retailer}".
-Never invent generic placeholders. Determine the real commercial product name, department, subcategory, leaf node, tags, and reason.
+    // Specialized retail taxonomy & POS abbreviation decoding instructions
+    const systemPrompt = `You are a Principal Retail Catalog Architect and Enterprise POS (Point of Sale) Data Specialist.
 
-Respond ONLY with a valid JSON object matching this schema:
+Your task is to decipher raw, abbreviated retail item descriptions (receipt strings, warehouse abbreviations, truncated SKU titles) and map them to the official taxonomy of "${retailer}".
+
+DECODING INSTRUCTIONS:
+1. De-abbreviate retail tokens carefully:
+   - "POU" = Pouch / Pour
+   - "SPKLE" = Sparkle / Sparkling
+   - "COS" = Cosmetic / Cosmetics / Costume
+   - "SMG" = Smiggle / Small Goods / Shimmer
+   - "RHOLG" / abbreviations = check for brand, variant, or packaging codes.
+2. NEVER guess unrelated terms (do not turn "MM" into sports drinks or random books).
+3. If an abbreviation is ambiguous, deduce the most statistically probable consumer product in "${retailer}".
+4. Output realistic catalog categories: Top Department, Subcategory, and a clean hierarchical Leaf Node.
+
+Respond ONLY with valid JSON (no markdown formatting, no code blocks):
 {
-  "expandedProductName": "Standardized title with brand, pack size, and volume/format",
-  "departmentCategory": "Realistic department / top category for ${retailer}",
-  "subCategory": "Realistic subcategory for ${retailer}",
-  "closestLeafNode": "The most specific leaf node in the hierarchy",
-  "productTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "confidenceScore": "96%",
-  "reasonForRecommendation": "Detailed sentence explaining the semantic classification logic and retail catalog mapping."
+  "expandedProductName": "Accurately deciphered and spelled-out commercial title with format/type",
+  "departmentCategory": "Official store department for ${retailer}",
+  "subCategory": "Relevant subcategory in ${retailer}",
+  "closestLeafNode": "Specific leaf node path (e.g. Beauty > Makeup Bags & Cases > Sparkle Pouches)",
+  "productTags": ["brand-or-type", "category", "material-or-flavor", "feature", "retailer"],
+  "confidenceScore": "92%",
+  "reasonForRecommendation": "Explain the token-by-token de-abbreviation logic and why it belongs in this exact leaf node."
 }`;
 
-    // 2. Query Groq Chat Completions
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -74,10 +84,10 @@ Respond ONLY with a valid JSON object matching this schema:
         model: selectedModel,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Product: "${productName}"\nRetailer: "${retailer}"` },
+          { role: "user", content: `Product Query: "${productName}"\nRetailer: "${retailer}"` },
         ],
         response_format: { type: "json_object" },
-        temperature: 0.1,
+        temperature: 0.0, // Zero temperature prevents random creative hallucinations
       }),
     });
 
